@@ -31,13 +31,19 @@ FusionEKF::FusionEKF() {
   R_radar_ << 0.09, 0, 0,
               0, 0.0009, 0,
               0, 0, 0.09;
+  // Observation Transformations
+  H_laser_<< 1, 0, 0, 0,
+             0, 1, 0, 0;
+  Hj_ << 0, 0, 0, 0,
+         0, 0, 0, 0,
+         0, 0, 0, 0;
 
-  /**
-   * TODO: Finish initializing the FusionEKF.
-   * TODO: Set the process and measurement noises
-   */
+  noise_ax = 9.0;
+  noise_ay = 9.0;
 
-
+  // Set up all the other matrices
+  ekf_.F_ = MatrixXd(4, 4);
+  ekf_.Q_ = MatrixXd(4, 4);
 }
 
 /**
@@ -51,25 +57,40 @@ void FusionEKF::ProcessMeasurement(const MeasurementPackage &measurement_pack) {
    */
   if (!is_initialized_) {
     /**
-     * TODO: Initialize the state ekf_.x_ with the first measurement.
-     * TODO: Create the covariance matrix.
-     * You'll need to convert radar from polar to cartesian coordinates.
+     * Initialize state vector based on first measurement.
+     * To get some rough initial speed eastimate, the assumptions are that the car initially started in the 
+     * coordinate origion at time 0 and thus the radial speed can be used.
      */
 
     // first measurement
-    cout << "EKF: " << endl;
+    cout << "EKF: ...Initialization" << endl;
     ekf_.x_ = VectorXd(4);
     ekf_.x_ << 1, 1, 1, 1;
 
     if (measurement_pack.sensor_type_ == MeasurementPackage::RADAR) {
-      // TODO: Convert radar from polar to cartesian coordinates 
-      //         and initialize state.
-
+      double rho = measurement_pack.raw_measurements_(0);
+      double phi = measurement_pack.raw_measurements_(1);
+      double rhodot = measurement_pack.raw_measurements_(2);
+      ekf_.x_ << rho * cos(phi),
+                 rho * sin(phi),
+                 5.2,
+                 0;
     }
     else if (measurement_pack.sensor_type_ == MeasurementPackage::LASER) {
-      // TODO: Initialize state.
-
+      ekf_.x_ << measurement_pack.raw_measurements_(0),
+                 measurement_pack.raw_measurements_(1),
+                 5.2,
+                 0;
     }
+    // Initial covariance Matrix
+    ekf_.P_ = MatrixXd(4, 4);
+    ekf_.P_ << 1, 0, 0, 0,
+               0, 1, 0, 0,
+               0, 0, 1000, 0,
+               0, 0, 0, 1000;
+
+    // Set timestamp correctly, i.e. we start now at zero.
+    previous_timestamp_ = measurement_pack.timestamp_;
 
     // done initializing, no need to predict or update
     is_initialized_ = true;
@@ -79,35 +100,34 @@ void FusionEKF::ProcessMeasurement(const MeasurementPackage &measurement_pack) {
   /**
    * Prediction
    */
+  // Calculate elapsed time. Convert to seconds.
+  float dt = (float)(measurement_pack.timestamp_ - previous_timestamp_) * 0.000001;
+  previous_timestamp_ = measurement_pack.timestamp_;
 
-  /**
-   * TODO: Update the state transition matrix F according to the new elapsed time.
-   * Time is measured in seconds.
-   * TODO: Update the process noise covariance matrix.
-   * Use noise_ax = 9 and noise_ay = 9 for your Q matrix.
-   */
+  ekf_.F_ << 1, 0, dt, 0,
+             0, 1, 0, dt,
+             0, 0, 1, 0,
+             0, 0, 0, 1;
+
+  ekf_.Q_ << dt * dt * dt * dt * noise_ax / 4, 0, dt * dt * dt * noise_ax / 2, 0,
+             0, dt * dt * dt * dt * noise_ay / 4, 0, dt * dt * dt * noise_ay / 2,
+             dt * dt * dt * noise_ax / 2, 0, dt * dt * noise_ax, 0,
+             0, dt * dt * dt * noise_ay / 2, 0, dt * dt * noise_ay;
 
   ekf_.Predict();
 
   /**
    * Update
-   */
-
-  /**
-   * TODO:
-   * - Use the sensor type to perform the update step.
-   * - Update the state and covariance matrices.
+   * Perform a Kalman or an Extended Kalman update depending on the Sensor that is used.
    */
 
   if (measurement_pack.sensor_type_ == MeasurementPackage::RADAR) {
-    // TODO: Radar updates
-
+    ekf_.H_ = tools.CalculateJacobian(ekf_.x_);
+    ekf_.R_ = R_radar_;
+    ekf_.UpdateEKF(measurement_pack.raw_measurements_);
   } else {
-    // TODO: Laser updates
-
+    ekf_.H_ = H_laser_;
+    ekf_.R_ = R_laser_;
+    ekf_.Update(measurement_pack.raw_measurements_);
   }
-
-  // print the output
-  cout << "x_ = " << ekf_.x_ << endl;
-  cout << "P_ = " << ekf_.P_ << endl;
 }
